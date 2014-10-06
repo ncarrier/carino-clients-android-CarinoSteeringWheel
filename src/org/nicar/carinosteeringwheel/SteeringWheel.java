@@ -14,6 +14,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.ProgressBar;
 
 /**
  * An example full-screen activity that shows and hides the system UI (i.e.
@@ -52,11 +53,13 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 
 	private Sensor mOrientation;
 	private SensorManager mSensorManager;
+	private float gravity[];
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 
+		gravity = new float[3];
 
 		setContentView(R.layout.activity_steering_wheel);
 
@@ -64,7 +67,8 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		final View contentView = findViewById(R.id.fullscreen_content);
 
 		mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-		mOrientation = mSensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION);
+		mOrientation = mSensorManager
+				.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
 
 		// Set up an instance of SystemUiHider to control the system UI for
 		// this activity.
@@ -189,12 +193,33 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 
 	@Override
 	public void onSensorChanged(SensorEvent event) {
-		float azimuth_angle = event.values[0];
-		float pitch_angle = event.values[1];
-		float roll_angle = event.values[2];
+		float alpha = (float) 0.8;
+		float norm;
+		byte x;
+		byte y;
+		byte z;
 
-		System.out.println("azimuth_angle: " + azimuth_angle + ", pitch_angle"
-				+ pitch_angle + ", roll_angle" + roll_angle);
+		// Lowpass filter the gravity vector so that sudden movements are
+		// filtered.
+		gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
+		gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
+		gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
+
+		// Normalize the gravity vector and rescale it so that every component
+		// fits the range of it's progress bar.
+		norm = (float) Math.sqrt(Math.pow(gravity[0], 2)
+				+ Math.pow(gravity[1], 2) + Math.pow(gravity[2], 2));
+		x = (byte) (50 * (gravity[0] / norm) + 50);
+		y = (byte) (50 * (gravity[1] / norm) + 50);
+		z = (byte) (50 * (gravity[2] / norm) + 50);
+
+		ProgressBar bar1 = (ProgressBar) findViewById(R.id.progressBar1);
+		ProgressBar bar2 = (ProgressBar) findViewById(R.id.progressBar2);
+		ProgressBar bar3 = (ProgressBar) findViewById(R.id.progressBar3);
+
+		bar1.setProgress((int) x);
+		bar2.setProgress((int) y);
+		bar3.setProgress((int) z);
 	}
 
 	@Override
