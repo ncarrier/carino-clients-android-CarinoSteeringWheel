@@ -1,5 +1,16 @@
 package org.nicar.carinosteeringwheel;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
+import java.nio.channels.Pipe;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
 import org.nicar.carinosteeringwheel.util.SystemUiHider;
 
 import android.annotation.TargetApi;
@@ -12,6 +23,7 @@ import android.hardware.SensorManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.ProgressBar;
@@ -55,6 +67,17 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	private SensorManager mSensorManager;
 	private float gravity[];
 
+	private SocketAddress address;
+
+	Thread carinoSelector;
+
+	private static final String TAG = "CarinoSteeringWheel";
+
+	private ConcurrentLinkedQueue<String> messageQueue;
+
+	private Pipe.SinkChannel messageReadyPipeSinkChannel = null;
+	private Selector selector;
+
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
@@ -69,6 +92,18 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
 		mOrientation = mSensorManager
 				.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+
+		// TODO find a mechanism for retrieving this ip address, either
+		// broadcast or multicast
+		address = new InetSocketAddress("192.168.44.161", 28259);
+
+		messageQueue = new ConcurrentLinkedQueue<String>();
+		try {
+			selector = Selector.open();
+		} catch (IOException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+		}
 
 		// Set up an instance of SystemUiHider to control the system UI for
 		// this activity.
@@ -132,6 +167,61 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		// while interacting with the UI.
 		findViewById(R.id.dummy_button).setOnTouchListener(
 				mDelayHideTouchListener);
+
+		carinoSelector = new Thread() {
+			@Override
+			public void run() {
+				Selector s = SteeringWheel.this.selector;
+				SelectionKey socketKey;
+				SocketChannel sc;
+				int operations;
+				ByteBuffer buffer = ByteBuffer.allocate(0x100);
+				int nbEvents;
+				String msg = null;
+
+				try {
+					sc = SocketChannel.open();
+					sc.configureBlocking(false);
+					operations = SelectionKey.OP_READ;
+					if (!sc.connect(address)) {
+						operations |= SelectionKey.OP_CONNECT;
+					} else {
+						sc.finishConnect();
+					}
+					socketKey = sc.register(s, operations);
+					while (true) {
+						Log.d(TAG, "loop turn");
+						nbEvents = s.select();
+						if (nbEvents == 0) {
+							msg = messageQueue.poll();
+							if (msg == null)
+								continue;
+							Log.e(TAG, "received : " + msg);
+						} else if (s.selectedKeys().contains(socketKey)) {
+							if (socketKey.isConnectable()) {
+								sc.finishConnect();
+								Log.d(TAG, "socket connected");
+								sc.register(s, SelectionKey.OP_READ);
+							}
+							if (socketKey.isReadable()) {
+								Log.d(TAG, "something ready to read");
+								sc.read(buffer);
+								Log.d(TAG, "something ready to read");
+							}
+						}
+					}
+				} catch (ClosedChannelException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+
+			}
+		};
+
+		carinoSelector.start();
 	}
 
 	@Override
@@ -139,7 +229,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		super.onResume();
 
 		mSensorManager.registerListener(this, mOrientation,
-				SensorManager.SENSOR_DELAY_GAME);
+				SensorManager.SENSOR_DELAY_NORMAL);
 	}
 
 	@Override
@@ -220,6 +310,9 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		bar1.setProgress((int) x);
 		bar2.setProgress((int) y);
 		bar3.setProgress((int) z);
+
+		selector.wakeup();
+		messageQueue.add("x = " + x + ", y = " + y + ", z = " + z);
 	}
 
 	@Override
