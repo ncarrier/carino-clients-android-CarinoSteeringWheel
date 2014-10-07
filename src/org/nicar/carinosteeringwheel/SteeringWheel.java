@@ -5,7 +5,6 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
-import java.nio.channels.Pipe;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
@@ -63,7 +62,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	 */
 	private SystemUiHider mSystemUiHider;
 
-	private Sensor mOrientation;
+	private Sensor mAccelerometer;
 	private SensorManager mSensorManager;
 	private float gravity[];
 
@@ -73,10 +72,10 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 
 	private static final String TAG = "CarinoSteeringWheel";
 
-	private ConcurrentLinkedQueue<String> messageQueue;
+	private ConcurrentLinkedQueue<ByteBuffer> messageQueue;
 
-	private Pipe.SinkChannel messageReadyPipeSinkChannel = null;
 	private Selector selector;
+	private SocketChannel socketChannel;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -90,16 +89,24 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		final View contentView = findViewById(R.id.fullscreen_content);
 
 		mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-		mOrientation = mSensorManager
+		mAccelerometer = mSensorManager
 				.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
 
 		// TODO find a mechanism for retrieving this ip address, either
 		// broadcast or multicast
 		address = new InetSocketAddress("192.168.44.161", 28259);
 
-		messageQueue = new ConcurrentLinkedQueue<String>();
+		messageQueue = new ConcurrentLinkedQueue<ByteBuffer>();
 		try {
 			selector = Selector.open();
+		} catch (IOException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+		}
+
+		try {
+			socketChannel = SocketChannel.open();
+			socketChannel.configureBlocking(false);
 		} catch (IOException e2) {
 			// TODO Auto-generated catch block
 			e2.printStackTrace();
@@ -173,15 +180,13 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 			public void run() {
 				Selector s = SteeringWheel.this.selector;
 				SelectionKey socketKey;
-				SocketChannel sc;
 				int operations;
 				ByteBuffer buffer = ByteBuffer.allocate(0x100);
 				int nbEvents;
-				String msg = null;
+				ByteBuffer msg = null;
+				SocketChannel sc = SteeringWheel.this.socketChannel;
 
 				try {
-					sc = SocketChannel.open();
-					sc.configureBlocking(false);
 					operations = SelectionKey.OP_READ;
 					if (!sc.connect(address)) {
 						operations |= SelectionKey.OP_CONNECT;
@@ -190,24 +195,49 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 					}
 					socketKey = sc.register(s, operations);
 					while (true) {
-						Log.d(TAG, "loop turn");
+						Log.d(TAG, "loop turn : " + messageQueue.size());
 						nbEvents = s.select();
 						if (nbEvents == 0) {
-							msg = messageQueue.poll();
-							if (msg == null)
-								continue;
-							Log.e(TAG, "received : " + msg);
-						} else if (s.selectedKeys().contains(socketKey)) {
+							Log.d(TAG, "nbEvents == 0");
+							if (!messageQueue.isEmpty())
+								sc.register(s, SelectionKey.OP_WRITE |
+										SelectionKey.OP_READ);
+						}
+						if (s.selectedKeys().contains(socketKey)) {
 							if (socketKey.isConnectable()) {
 								sc.finishConnect();
 								Log.d(TAG, "socket connected");
 								sc.register(s, SelectionKey.OP_READ);
 							}
 							if (socketKey.isReadable()) {
-								Log.d(TAG, "something ready to read");
+								buffer.clear();
 								sc.read(buffer);
-								Log.d(TAG, "something ready to read");
+								// TODO consume the data, ie, create an object
+								// containing the interpreted data from
+								// get(byte[] dst)
+								Log.d(TAG, "received :" + buffer);
 							}
+							if (socketKey.isWritable()) {
+								Log.d(TAG, "something ready to write");
+								while (!messageQueue.isEmpty()) {
+									msg = messageQueue.peek();
+									sc.write(msg);
+									// msg.flip();
+									if (msg.hasRemaining())
+										break;
+
+									Log.d(TAG,
+											"size before : "
+													+ messageQueue.size());
+									messageQueue.remove(msg);
+									Log.d(TAG,
+											"size after : "
+													+ messageQueue.size());
+								}
+								if (messageQueue.isEmpty())
+									sc.register(s, SelectionKey.OP_READ);
+							}
+							s.selectedKeys().remove(socketKey);
 						}
 					}
 				} catch (ClosedChannelException e1) {
@@ -228,7 +258,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	protected void onResume() {
 		super.onResume();
 
-		mSensorManager.registerListener(this, mOrientation,
+		mSensorManager.registerListener(this, mAccelerometer,
 				SensorManager.SENSOR_DELAY_NORMAL);
 	}
 
@@ -311,8 +341,12 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		bar2.setProgress((int) y);
 		bar3.setProgress((int) z);
 
-		selector.wakeup();
-		messageQueue.add("x = " + x + ", y = " + y + ", z = " + z);
+		if (this.socketChannel.isConnected()) {
+			String msgString = "x = " + x + ", y = " + y + ", z = " + z + "\n";
+			ByteBuffer msg = ByteBuffer.wrap(msgString.getBytes());
+			messageQueue.add(msg);
+			selector.wakeup();
+		}
 	}
 
 	@Override
