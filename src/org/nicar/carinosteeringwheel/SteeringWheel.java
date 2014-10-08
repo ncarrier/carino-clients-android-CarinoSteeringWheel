@@ -3,14 +3,6 @@ package org.nicar.carinosteeringwheel;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.InetSocketAddress;
-import java.net.SocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.SocketChannel;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.nicar.carinosteeringwheel.util.SystemUiHider;
 
@@ -36,6 +28,8 @@ import android.widget.ProgressBar;
  * @see SystemUiHider
  */
 public class SteeringWheel extends Activity implements SensorEventListener {
+	public static final String TAG = "CarinoSteeringWheel";
+
 	/**
 	 * Whether or not the system UI should be auto-hidden after
 	 * {@link #AUTO_HIDE_DELAY_MILLIS} milliseconds.
@@ -68,16 +62,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	private SensorManager mSensorManager;
 	private float gravity[];
 
-	private SocketAddress address;
-
-	Thread carinoSelector;
-
-	private static final String TAG = "CarinoSteeringWheel";
-
-	private ConcurrentLinkedQueue<ByteBuffer> messageQueue;
-
-	private Selector selector;
-	private SocketChannel socketChannel;
+	private CarinoListener carinoSelector;
 
 	protected static String readGateway() throws IOException {
 		Process process = new ProcessBuilder().command("/system/bin/getprop")
@@ -116,30 +101,13 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 
 		/*
 		 * TODO if the car is the access point, we could use the gateway as the
-		 * car's address
+		 * car's address -> rather use DHCP information
 		 */
 		try {
 			Log.e(TAG, "gateway is " + SteeringWheel.readGateway());
 		} catch (IOException e3) {
 			// TODO Auto-generated catch block
 			e3.printStackTrace();
-		}
-		address = new InetSocketAddress("192.168.44.161", 28259);
-
-		messageQueue = new ConcurrentLinkedQueue<ByteBuffer>();
-		try {
-			selector = Selector.open();
-		} catch (IOException e2) {
-			// TODO Auto-generated catch block
-			e2.printStackTrace();
-		}
-
-		try {
-			socketChannel = SocketChannel.open();
-			socketChannel.configureBlocking(false);
-		} catch (IOException e2) {
-			// TODO Auto-generated catch block
-			e2.printStackTrace();
 		}
 
 		// Set up an instance of SystemUiHider to control the system UI for
@@ -205,74 +173,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		findViewById(R.id.dummy_button).setOnTouchListener(
 				mDelayHideTouchListener);
 
-		carinoSelector = new Thread() {
-			@Override
-			public void run() {
-				Selector s = SteeringWheel.this.selector;
-				SelectionKey socketKey;
-				int operations;
-				ByteBuffer buffer = ByteBuffer.allocate(0x100);
-				int nbEvents;
-				ByteBuffer msg = null;
-				SocketChannel sc = SteeringWheel.this.socketChannel;
-
-				try {
-					operations = SelectionKey.OP_READ;
-					if (!sc.connect(address)) {
-						operations |= SelectionKey.OP_CONNECT;
-					} else {
-						sc.finishConnect();
-					}
-					socketKey = sc.register(s, operations);
-					while (true) {
-						nbEvents = s.select();
-						if (nbEvents == 0) {
-							if (!messageQueue.isEmpty())
-								sc.register(s, SelectionKey.OP_WRITE |
-										SelectionKey.OP_READ);
-						}
-						if (s.selectedKeys().contains(socketKey)) {
-							if (socketKey.isConnectable()) {
-								sc.finishConnect();
-								Log.d(TAG, "socket connected");
-								sc.register(s, SelectionKey.OP_READ);
-							}
-							if (socketKey.isReadable()) {
-								buffer.clear();
-								sc.read(buffer);
-								buffer.flip();
-								while (buffer.hasRemaining())
-									Log.e(TAG, Byte.toString(buffer.get()));
-								// TODO consume the data, ie, create an object
-								// containing the interpreted data from
-								// get(byte[] dst)
-							}
-							if (socketKey.isWritable()) {
-								while (!messageQueue.isEmpty()) {
-									msg = messageQueue.peek();
-									sc.write(msg);
-									// msg.flip();
-									if (msg.hasRemaining())
-										break;
-
-									messageQueue.remove(msg);
-								}
-								if (messageQueue.isEmpty())
-									sc.register(s, SelectionKey.OP_READ);
-							}
-							s.selectedKeys().remove(socketKey);
-						}
-					}
-				} catch (ClosedChannelException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				} catch (IOException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-
-			}
-		};
+		carinoSelector = new CarinoListener();
 
 		carinoSelector.start();
 	}
@@ -341,15 +242,17 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		byte x;
 		byte y;
 		byte z;
+		String msgString;
 
-		// Lowpass filter the gravity vector so that sudden movements are
-		// filtered.
+		/* lowpass filter the gravity vector to filter.udden movements */
 		gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
 		gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
 		gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
 
-		// Normalize the gravity vector and rescale it so that every component
-		// fits the range of it's progress bar.
+		/*
+		 * normalize the gravity vector and rescale it so that every component
+		 * fits the range of it's progress bar.
+		 */
 		norm = (float) Math.sqrt(Math.pow(gravity[0], 2)
 				+ Math.pow(gravity[1], 2) + Math.pow(gravity[2], 2));
 		x = (byte) (50 * (gravity[0] / norm) + 50);
@@ -364,12 +267,8 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		bar2.setProgress((int) y);
 		bar3.setProgress((int) z);
 
-		if (this.socketChannel.isConnected()) {
-			String msgString = "x = " + x + ", y = " + y + ", z = " + z + "\n";
-			ByteBuffer msg = ByteBuffer.wrap(msgString.getBytes());
-			messageQueue.add(msg);
-			selector.wakeup();
-		}
+		msgString = "x = " + x + ", y = " + y + ", z = " + z + "\n";
+		this.carinoSelector.postMessage(msgString.getBytes());
 	}
 
 	@Override
