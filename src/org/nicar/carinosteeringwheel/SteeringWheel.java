@@ -185,6 +185,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 				int nbEvents;
 				ByteBuffer msg = null;
 				SocketChannel sc = SteeringWheel.this.socketChannel;
+				int received;
 
 				try {
 					operations = SelectionKey.OP_READ;
@@ -195,10 +196,8 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 					}
 					socketKey = sc.register(s, operations);
 					while (true) {
-						Log.d(TAG, "loop turn : " + messageQueue.size());
 						nbEvents = s.select();
 						if (nbEvents == 0) {
-							Log.d(TAG, "nbEvents == 0");
 							if (!messageQueue.isEmpty())
 								sc.register(s, SelectionKey.OP_WRITE |
 										SelectionKey.OP_READ);
@@ -211,14 +210,15 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 							}
 							if (socketKey.isReadable()) {
 								buffer.clear();
-								sc.read(buffer);
+								received = sc.read(buffer);
+								buffer.flip();
+								while (buffer.hasRemaining())
+									Log.e(TAG, Byte.toString(buffer.get()));
 								// TODO consume the data, ie, create an object
 								// containing the interpreted data from
 								// get(byte[] dst)
-								Log.d(TAG, "received :" + buffer);
 							}
 							if (socketKey.isWritable()) {
-								Log.d(TAG, "something ready to write");
 								while (!messageQueue.isEmpty()) {
 									msg = messageQueue.peek();
 									sc.write(msg);
@@ -226,13 +226,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 									if (msg.hasRemaining())
 										break;
 
-									Log.d(TAG,
-											"size before : "
-													+ messageQueue.size());
 									messageQueue.remove(msg);
-									Log.d(TAG,
-											"size after : "
-													+ messageQueue.size());
 								}
 								if (messageQueue.isEmpty())
 									sc.register(s, SelectionKey.OP_READ);
@@ -259,7 +253,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		super.onResume();
 
 		mSensorManager.registerListener(this, mAccelerometer,
-				SensorManager.SENSOR_DELAY_NORMAL);
+				SensorManager.SENSOR_DELAY_GAME);
 	}
 
 	@Override
