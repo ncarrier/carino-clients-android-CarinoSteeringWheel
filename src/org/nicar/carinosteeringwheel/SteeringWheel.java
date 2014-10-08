@@ -1,6 +1,8 @@
 package org.nicar.carinosteeringwheel;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
@@ -77,6 +79,27 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	private Selector selector;
 	private SocketChannel socketChannel;
 
+	protected static String readGateway() throws IOException {
+		Process process = new ProcessBuilder().command("/system/bin/getprop")
+				.redirectErrorStream(true).start();
+		try {
+			BufferedReader in = new BufferedReader(new InputStreamReader(
+					process.getInputStream()));
+
+			String line;
+			while ((line = in.readLine()) != null) {
+				String property[] = line.replaceAll("\\Q[\\E|\\Q]\\E", "")
+						.split(":");
+				if (property[0].matches("net\\Q.\\E.*\\Q.\\Egw"))
+					return property[1];
+			}
+		} finally {
+			process.destroy();
+		}
+
+		return null;
+	}
+
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
@@ -92,8 +115,16 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		mAccelerometer = mSensorManager
 				.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
 
-		// TODO find a mechanism for retrieving this ip address, either
-		// broadcast or multicast
+		/*
+		 * TODO if the car is the access point, we could use the gateway as the
+		 * car's address
+		 */
+		try {
+			Log.e(TAG, "gateway is " + SteeringWheel.readGateway());
+		} catch (IOException e3) {
+			// TODO Auto-generated catch block
+			e3.printStackTrace();
+		}
 		address = new InetSocketAddress("192.168.44.161", 28259);
 
 		messageQueue = new ConcurrentLinkedQueue<ByteBuffer>();
@@ -185,7 +216,6 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 				int nbEvents;
 				ByteBuffer msg = null;
 				SocketChannel sc = SteeringWheel.this.socketChannel;
-				int received;
 
 				try {
 					operations = SelectionKey.OP_READ;
@@ -210,7 +240,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 							}
 							if (socketKey.isReadable()) {
 								buffer.clear();
-								received = sc.read(buffer);
+								sc.read(buffer);
 								buffer.flip();
 								while (buffer.hasRemaining())
 									Log.e(TAG, Byte.toString(buffer.get()));
