@@ -112,8 +112,7 @@ public class CarinoListener extends java.lang.Thread {
 		try {
 			socketChannel.close();
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			/* nothing interesting to do here, IMHO */
 		}
 	}
 
@@ -121,7 +120,9 @@ public class CarinoListener extends java.lang.Thread {
 	public void run() {
 		while (true) {
 			connect();
+			Log.d(TAG, "connected !");
 			select();
+			Log.d(TAG, "connection lost :(");
 		}
 	}
 
