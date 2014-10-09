@@ -3,7 +3,6 @@ package org.nicar.carinosteeringwheel;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
@@ -17,6 +16,10 @@ public class CarinoListener extends java.lang.Thread {
 	private SocketChannel socketChannel;
 	private InetSocketAddress address;
 	private ConcurrentLinkedQueue<ByteBuffer> messageQueue;
+	ByteBuffer readBuffer = ByteBuffer.allocate(0x100);
+	ByteBuffer writeBuffer = null;
+	private final int RO = SelectionKey.OP_READ;
+	private final int RW = SelectionKey.OP_WRITE | RO;
 
 	public CarinoListener() {
 		super();
@@ -24,7 +27,6 @@ public class CarinoListener extends java.lang.Thread {
 		try {
 			selector = Selector.open();
 			socketChannel = SocketChannel.open();
-			socketChannel.configureBlocking(false);
 		} catch (IOException e2) {
 			// TODO Auto-generated catch block
 			e2.printStackTrace();
@@ -33,38 +35,55 @@ public class CarinoListener extends java.lang.Thread {
 		messageQueue = new ConcurrentLinkedQueue<ByteBuffer>();
 	}
 
-	@Override
-	public void run() {
+	private void connect() {
+		while (true) {
+			if (socketChannel.isConnected())
+				return;
+
+			try {
+				if (!socketChannel.isOpen())
+					socketChannel = SocketChannel.open();
+
+				if (!socketChannel.isConnectionPending()) {
+					socketChannel.connect(address);
+					if (socketChannel.finishConnect())
+						return;
+				} else {
+					if (socketChannel.finishConnect())
+						return;
+				}
+			} catch (Exception e) {
+				/* nothing to do, just retry */
+			}
+
+			Log.d(TAG, "connection failed, retry in one second");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+		}
+	}
+
+	private void select() {
 		SelectionKey socketKey;
-		int operations;
-		ByteBuffer readBuffer = ByteBuffer.allocate(0x100);
-		ByteBuffer writeBuffer = null;
 		int nbEvents;
+		int read;
 
 		try {
-			operations = SelectionKey.OP_READ;
-			if (!socketChannel.connect(address)) {
-				operations |= SelectionKey.OP_CONNECT;
-			} else {
-				socketChannel.finishConnect();
-			}
-			socketKey = socketChannel.register(selector, operations);
+			socketChannel.configureBlocking(false);
+			socketKey = socketChannel.register(selector, RO);
 			while (true) {
 				nbEvents = selector.select();
-				if (nbEvents == 0) {
-					if (!messageQueue.isEmpty())
-						socketChannel.register(selector, SelectionKey.OP_WRITE
-								| SelectionKey.OP_READ);
-				}
+				if (nbEvents == 0 && !messageQueue.isEmpty())
+						socketChannel.register(selector, RW);
 				if (selector.selectedKeys().contains(socketKey)) {
-					if (socketKey.isConnectable()) {
-						socketChannel.finishConnect();
-						Log.d(TAG, "socket connected");
-						socketChannel.register(selector, SelectionKey.OP_READ);
-					}
 					if (socketKey.isReadable()) {
 						readBuffer.clear();
-						socketChannel.read(readBuffer);
+						read = socketChannel.read(readBuffer);
+						if (read == -1)
+							break;
 						readBuffer.flip();
 						while (readBuffer.hasRemaining())
 							Log.e(TAG, Byte.toString(readBuffer.get()));
@@ -76,24 +95,33 @@ public class CarinoListener extends java.lang.Thread {
 						while (!messageQueue.isEmpty()) {
 							writeBuffer = messageQueue.peek();
 							socketChannel.write(writeBuffer);
-							// msg.flip();
 							if (writeBuffer.hasRemaining())
 								break;
 
 							messageQueue.remove(writeBuffer);
 						}
 						if (messageQueue.isEmpty())
-							socketChannel.register(selector, SelectionKey.OP_READ);
+							socketChannel.register(selector, RO);
 					}
 					selector.selectedKeys().remove(socketKey);
 				}
 			}
-		} catch (ClosedChannelException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
+		} catch (Exception e1) {
+			/* nothing to do, just close and try to start again */
+		}
+		try {
+			socketChannel.close();
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
+		}
+	}
+
+	@Override
+	public void run() {
+		while (true) {
+			connect();
+			select();
 		}
 	}
 
