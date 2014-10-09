@@ -10,8 +10,6 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
 import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -27,7 +25,7 @@ import android.widget.ProgressBar;
  * 
  * @see SystemUiHider
  */
-public class SteeringWheel extends Activity implements SensorEventListener {
+public class SteeringWheel extends Activity {
 	public static final String TAG = "CarinoSteeringWheel";
 
 	/**
@@ -60,9 +58,9 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 
 	private Sensor mAccelerometer;
 	private SensorManager mSensorManager;
-	private float gravity[];
 
 	private CarinoListener carinoSelector;
+	private AccelerometerListener accelerometerListener;
 
 	protected static String readGateway() throws IOException {
 		Process process = new ProcessBuilder().command("/system/bin/getprop")
@@ -89,7 +87,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 
-		gravity = new float[3];
+		Log.d(TAG, "CarinoSteeringWheel onCreate");
 
 		setContentView(R.layout.activity_steering_wheel);
 
@@ -98,6 +96,12 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
 		mAccelerometer = mSensorManager
 				.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+		carinoSelector = new CarinoListener();
+		carinoSelector.start();
+		accelerometerListener = new AccelerometerListener(carinoSelector,
+				(ProgressBar) findViewById(R.id.progressBar1),
+				(ProgressBar) findViewById(R.id.progressBar2),
+				(ProgressBar) findViewById(R.id.progressBar3));
 
 		/*
 		 * TODO if the car is the access point, we could use the gateway as the
@@ -172,17 +176,13 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 		// while interacting with the UI.
 		findViewById(R.id.dummy_button).setOnTouchListener(
 				mDelayHideTouchListener);
-
-		carinoSelector = new CarinoListener();
-
-		carinoSelector.start();
 	}
 
 	@Override
 	protected void onResume() {
 		super.onResume();
 
-		mSensorManager.registerListener(this, mAccelerometer,
+		mSensorManager.registerListener(accelerometerListener, mAccelerometer,
 				SensorManager.SENSOR_DELAY_GAME);
 	}
 
@@ -190,7 +190,7 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	protected void onPause() {
 		super.onPause();
 
-		mSensorManager.unregisterListener(this);
+		mSensorManager.unregisterListener(accelerometerListener);
 	}
 
 	@Override
@@ -233,47 +233,5 @@ public class SteeringWheel extends Activity implements SensorEventListener {
 	private void delayedHide(int delayMillis) {
 		mHideHandler.removeCallbacks(mHideRunnable);
 		mHideHandler.postDelayed(mHideRunnable, delayMillis);
-	}
-
-	@Override
-	public void onSensorChanged(SensorEvent event) {
-		float alpha = (float) 0.8;
-		float norm;
-		byte x;
-		byte y;
-		byte z;
-		String msgString;
-
-		/* lowpass filter the gravity vector to filter.udden movements */
-		gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
-		gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
-		gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
-
-		/*
-		 * normalize the gravity vector and rescale it so that every component
-		 * fits the range of it's progress bar.
-		 */
-		norm = (float) Math.sqrt(Math.pow(gravity[0], 2)
-				+ Math.pow(gravity[1], 2) + Math.pow(gravity[2], 2));
-		x = (byte) (50 * (gravity[0] / norm) + 50);
-		y = (byte) (50 * (gravity[1] / norm) + 50);
-		z = (byte) (50 * (gravity[2] / norm) + 50);
-
-		ProgressBar bar1 = (ProgressBar) findViewById(R.id.progressBar1);
-		ProgressBar bar2 = (ProgressBar) findViewById(R.id.progressBar2);
-		ProgressBar bar3 = (ProgressBar) findViewById(R.id.progressBar3);
-
-		bar1.setProgress((int) x);
-		bar2.setProgress((int) y);
-		bar3.setProgress((int) z);
-
-		msgString = "x = " + x + ", y = " + y + ", z = " + z + "\n";
-		this.carinoSelector.postMessage(msgString.getBytes());
-	}
-
-	@Override
-	public void onAccuracyChanged(Sensor sensor, int accuracy) {
-		// TODO Auto-generated method stub
-
 	}
 }
