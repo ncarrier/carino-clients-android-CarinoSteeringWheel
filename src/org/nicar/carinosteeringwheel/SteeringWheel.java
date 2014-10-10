@@ -15,10 +15,12 @@ public class SteeringWheel extends Activity {
 	private static final int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
 			| View.SYSTEM_UI_FLAG_FULLSCREEN;
 	private View decorView;
-
+	private final static long UI_RESTORE_DELAY = 3000;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
+		View.OnSystemUiVisibilityChangeListener visChangeListener;
+
 		super.onCreate(savedInstanceState);
 
 		Log.d(TAG, "CarinoSteeringWheel onCreate");
@@ -37,6 +39,21 @@ public class SteeringWheel extends Activity {
 				(SensorManager) getSystemService(SENSOR_SERVICE));
 		accelerometerListener.setPriority(Thread.NORM_PRIORITY - 1);
 		accelerometerListener.start();
+
+		visChangeListener = new View.OnSystemUiVisibilityChangeListener() {
+			private Runnable visibilityRestorer = new Runnable() {
+				public void run() {
+					decorView.setSystemUiVisibility(uiOptions);
+				}
+			};
+
+			@Override
+			public void onSystemUiVisibilityChange(int visibility) {
+				if ((uiOptions & visibility) != uiOptions)
+					decorView.postDelayed(visibilityRestorer, UI_RESTORE_DELAY);
+			}
+		};
+		decorView.setOnSystemUiVisibilityChangeListener(visChangeListener);
 	}
 
 	@Override
