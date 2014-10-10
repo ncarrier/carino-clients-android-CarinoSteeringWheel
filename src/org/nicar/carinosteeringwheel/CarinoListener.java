@@ -121,6 +121,8 @@ public class CarinoListener extends java.lang.Thread {
 		while (true) {
 			connect();
 			Log.d(TAG, "connected !");
+			/* drop the old messages which could be in the queue */
+			messageQueue.clear();
 			select();
 			Log.d(TAG, "connection lost :(");
 		}
