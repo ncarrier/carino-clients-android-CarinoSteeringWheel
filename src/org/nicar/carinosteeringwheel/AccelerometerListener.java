@@ -48,42 +48,38 @@ public class AccelerometerListener extends Thread implements
 
 	@Override
 	public void onSensorChanged(SensorEvent event) {
-		float alpha = (float) 0.8;
+		float alpha = 0.8f;
 		float norm;
-		int x;
-		int y;
-		int z;
-		String msgString;
+		float x;
+		float y;
+		float z;
 		long ts;
+		int max = bar1.getMax() / 2;
 
 		ts = System.currentTimeMillis();
 
-		/* lowpass filter the gravity vector to filter.udden movements */
+		/* lowpass filter the gravity vector to filter sudden movements */
 		gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
 		gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
 		gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
 
-		/*
-		 * normalize the gravity vector and rescale it so that every component
-		 * fits the range of it's progress bar.
-		 */
+		/* normalize the gravity vector */
 		norm = (float) Math.sqrt(Math.pow(gravity[0], 2)
 				+ Math.pow(gravity[1], 2) + Math.pow(gravity[2], 2));
-		double max = bar1.getMax() / 2;
-		double k = max / norm;
-		x = (int) (k * gravity[0] + max);
-		y = (int) (k * gravity[1] + max);
-		z = (int) (k * gravity[2] + max);
+		x = gravity[0] / norm;
+		y = gravity[1] / norm;
+		z = gravity[2] / norm;
 
 		if (ts - previous_ui_refresh_timestamp > UI_REFRESH_TIME) {
 			previous_ui_refresh_timestamp = ts;
-			bar1.setProgress(x);
-			bar2.setProgress(y);
-			bar3.setProgress(z);
+			bar1.setProgress((int) ((x + 1f) * max));
+			bar2.setProgress((int) ((y + 1f) * max));
+			bar3.setProgress((int) ((z + 1f) * max));
 		}
 
-		msgString = "x = " + x + ", y = " + y + ", z = " + z + "\n";
-		this.carinoSelector.postMessage(msgString.getBytes());
+		// Log.d(TAG, "direction = " + y + ", speed = " + y + "\n");
+
+		this.carinoSelector.setDirectionAndSpeed(2 * y, 3 * z - 2);
 	}
 
 	@Override
@@ -98,7 +94,7 @@ public class AccelerometerListener extends Thread implements
 				if (this.mRegister) {
 					Log.d(TAG, "register");
 					mSensorManager.registerListener(this, mAccelerometer,
-							SensorManager.SENSOR_DELAY_UI);
+							SensorManager.SENSOR_DELAY_GAME);
 				} else {
 					Log.d(TAG, "unregister");
 					mSensorManager.unregisterListener(this);

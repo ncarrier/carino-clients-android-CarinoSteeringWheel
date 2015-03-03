@@ -1,10 +1,12 @@
 package org.nicar.carinosteeringwheel;
 
-import java.nio.ByteBuffer;
 
 public class Command {
+	private static final String TAG = SteeringWheel.TAG;
 	private final static int CAMERA_ANGLE_MIN = 0;
 	private final static int CAMERA_ANGLE_MAX = 180;
+	private final static int DIRECTION_ANGLE_MIN = 50;
+	private final static int DIRECTION_ANGLE_MAX = 140;
 
 	private final static int START = 0x55;
 
@@ -21,9 +23,9 @@ public class Command {
 
 	private int mLeftMotorSpeed;
 	private int mRightMotorSpeed;
-	private byte mServoAngle;
-	private byte mCameraXAngle;
-	private byte mCameraZAngle;
+	private int mServoAngle;
+	private int mCameraXAngle;
+	private int mCameraZAngle;
 	private boolean mBeep;
 
 	private boolean mDirty;
@@ -44,21 +46,37 @@ public class Command {
 		mLeftMotorSpeed = 0;
 		mRightMotorSpeed = 0;
 		mServoAngle = 0;
-		mCameraXAngle = 0;
-		mCameraZAngle = 0;
+		mCameraXAngle = 90;
+		mCameraZAngle = 90;
 		mBeep = false;
 	}
 
-	public void updateMotorsSpeed(int commonSpeed) {
-		if (commonSpeed > 255)
-			commonSpeed = 255;
-		if (commonSpeed < -255)
-			commonSpeed = -255;
+	/* takes a float in [-1, 1] and put int the [a, b] integer range */
+	private int putInRange(float value, int a, int b) {
+		float spread = (b - a) / 2.f;
 
-		if (mLeftMotorSpeed != commonSpeed || mRightMotorSpeed != commonSpeed)
+		if (spread < 0)
+			throw new IllegalArgumentException();
+
+		value = (value + 1.f) * spread + a;
+
+		return (int) value;
+	}
+
+	public void setMotorsSpeed(float speed) {
+		int intSpeed;
+
+		if (speed > 1.f)
+			speed = 1.f;
+		if (speed < -1.f)
+			speed = -1.f;
+
+		intSpeed = putInRange(speed, -255, 255);
+
+		if (mLeftMotorSpeed != intSpeed || mRightMotorSpeed != intSpeed)
 			mDirty = true;
 
-		mLeftMotorSpeed = mRightMotorSpeed = commonSpeed;
+		mLeftMotorSpeed = mRightMotorSpeed = intSpeed;
 	}
 
 	public boolean isDirty() {
@@ -85,14 +103,29 @@ public class Command {
 		mBeep = !mBeep;
 	}
 
-	public void setDirection(byte direction) {
-		if (direction != mServoAngle)
+	public void setDirection(float direction) {
+		int intDirection;
+
+		if (direction > 1.f)
+			direction = 1.f;
+		if (direction < -1.f)
+			direction = -1.f;
+
+		intDirection = putInRange(direction, DIRECTION_ANGLE_MIN,
+				DIRECTION_ANGLE_MAX);
+
+		if (intDirection != mServoAngle)
 			mDirty = true;
 
-		mServoAngle = direction;
+		mServoAngle = intDirection;
 	}
 
-	public void setCameraXAngle(byte cameraXAngle) {
+	public void setCameraXAngle(int cameraXAngle) {
+		/* TODO maybe to rework when really used, see setDirection */
+		if (cameraXAngle > CAMERA_ANGLE_MIN)
+			cameraXAngle = CAMERA_ANGLE_MIN;
+		if (cameraXAngle > CAMERA_ANGLE_MAX)
+			cameraXAngle = CAMERA_ANGLE_MAX;
 		if (cameraXAngle != mCameraXAngle)
 			mDirty = true;
 
@@ -106,25 +139,25 @@ public class Command {
 		mCameraZAngle = cameraZAngle;
 	}
 
-	public ByteBuffer prepare() {
+	public byte[] prepare() {
 		byte packet[] = new byte[10];
 
 		packet[IDX_START] = START;
 		// TODO should not work with negative values
-		packet[IDX_LMS_HIGH] = (byte) ((mLeftMotorSpeed & 0xFF00) >> 8);
-		packet[IDX_LMS_LOW] = (byte) (mLeftMotorSpeed & 0xFF);
-		packet[IDX_RMS_HIGH] = (byte) ((mRightMotorSpeed & 0xFF00) >> 8);
-		packet[IDX_RMS_LOW] = (byte) (mRightMotorSpeed & 0xFF);
+		packet[IDX_LMS_LOW] = (byte) ((mLeftMotorSpeed & 0xFF00) >> 8);
+		packet[IDX_LMS_HIGH] = (byte) (mLeftMotorSpeed & 0xFF);
+		packet[IDX_RMS_LOW] = (byte) ((mRightMotorSpeed & 0xFF00) >> 8);
+		packet[IDX_RMS_HIGH] = (byte) (mRightMotorSpeed & 0xFF);
 
-		packet[IDX_DIRECTION] = mServoAngle;
-		packet[IDX_CAMERA_X_ANGLE] = mCameraXAngle;
-		packet[IDX_CAMERA_Y_ANGLE] = mCameraZAngle;
+		packet[IDX_DIRECTION] = (byte) mServoAngle;
+		packet[IDX_CAMERA_X_ANGLE] = (byte) mCameraXAngle;
+		packet[IDX_CAMERA_Y_ANGLE] = (byte) mCameraZAngle;
 
 		packet[IDX_BEEP] = (byte) (mBeep ? 1 : 0);
 		packet[IDX_CHECKSUM] = checksum(packet);
 
 		mDirty = false;
 
-		return ByteBuffer.wrap(packet);
+		return packet;
 	}
 }

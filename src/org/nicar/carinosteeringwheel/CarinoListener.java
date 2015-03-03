@@ -6,7 +6,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import android.util.Log;
 
@@ -15,11 +14,11 @@ public class CarinoListener extends java.lang.Thread {
 	private Selector selector;
 	private SocketChannel socketChannel;
 	private InetSocketAddress address;
-	private ConcurrentLinkedQueue<ByteBuffer> messageQueue;
 	ByteBuffer readBuffer = ByteBuffer.allocate(0x100);
 	ByteBuffer writeBuffer = null;
 	private final int RO = SelectionKey.OP_READ;
 	private final int RW = SelectionKey.OP_WRITE | RO;
+	private Command command = new Command();
 
 	public CarinoListener() {
 		super();
@@ -31,8 +30,9 @@ public class CarinoListener extends java.lang.Thread {
 			// TODO Auto-generated catch block
 			e2.printStackTrace();
 		}
-		address = new InetSocketAddress("192.168.44.161", 28259);
-		messageQueue = new ConcurrentLinkedQueue<ByteBuffer>();
+		// address = new InetSocketAddress("192.168.44.161", 28259);
+		address = new InetSocketAddress("10.10.10.1", 28259);
+		Log.e(TAG, "address used is " + address.toString());
 	}
 
 	private void connect() {
@@ -71,43 +71,46 @@ public class CarinoListener extends java.lang.Thread {
 		int nbEvents;
 		int read;
 
+		readBuffer.clear();
+
 		try {
 			socketChannel.configureBlocking(false);
 			socketKey = socketChannel.register(selector, RO);
 			while (true) {
 				nbEvents = selector.select();
-				if (nbEvents == 0 && !messageQueue.isEmpty())
+				synchronized (command) {
+					if (nbEvents == 0 && command.isDirty())
 						socketChannel.register(selector, RW);
+				}
 				if (selector.selectedKeys().contains(socketKey)) {
 					if (socketKey.isReadable()) {
-						readBuffer.clear();
 						read = socketChannel.read(readBuffer);
 						if (read == -1)
 							break;
-						readBuffer.flip();
-						while (readBuffer.hasRemaining())
-							Log.e(TAG, Byte.toString(readBuffer.get()));
-						// TODO consume the data, ie, create an object
-						// containing the interpreted data from
-						// get(byte[] dst)
+						if (read == 0) {
+							readBuffer.clear();
+						} else if (readBuffer.get(readBuffer.position() - 1) == '\n') {
+							byte dst[] = new byte[1024];
+							readBuffer.flip();
+							readBuffer.get(dst, 0, readBuffer.remaining());
+							Log.e(TAG,
+									new String(dst, 0, readBuffer.remaining()));
+							readBuffer.clear();
+						}
 					}
 					if (socketKey.isWritable()) {
-						while (!messageQueue.isEmpty()) {
-							writeBuffer = messageQueue.peek();
+						synchronized (command) {
+							writeBuffer = ByteBuffer.wrap(command.prepare());
 							socketChannel.write(writeBuffer);
-							if (writeBuffer.hasRemaining())
-								break;
-
-							messageQueue.remove(writeBuffer);
-						}
-						if (messageQueue.isEmpty())
 							socketChannel.register(selector, RO);
+						}
 					}
 					selector.selectedKeys().remove(socketKey);
 				}
 			}
 		} catch (Exception e1) {
 			/* nothing to do, just close and try to start again */
+			e1.printStackTrace();
 		}
 		try {
 			socketChannel.close();
@@ -121,18 +124,18 @@ public class CarinoListener extends java.lang.Thread {
 		while (true) {
 			connect();
 			Log.d(TAG, "connected !");
-			/* drop the old messages which could be in the queue */
-			messageQueue.clear();
 			select();
 			Log.d(TAG, "connection lost :(");
 		}
 	}
 
-	public void postMessage(byte msg[]) {
-		if (this.socketChannel.isConnected()) {
-			ByteBuffer bb = ByteBuffer.wrap(msg);
-			messageQueue.add(bb);
-			selector.wakeup();
+	public void setDirectionAndSpeed(float direction, float speed) {
+		synchronized (command) {
+			if (this.socketChannel.isConnected()) {
+				command.setMotorsSpeed(speed);
+				command.setDirection(direction);
+				selector.wakeup();
+			}
 		}
 	}
 }
